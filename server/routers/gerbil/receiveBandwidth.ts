@@ -122,7 +122,7 @@ export async function flushSiteBandwidthToDb(): Promise<void> {
     const snapshot = accumulator;
     accumulator = new Map<string, AccumulatorEntry>();
 
-    const currentTime = new Date().toISOString();
+    const currentEpoch = Math.floor(Date.now() / 1000);
 
     // Sort by publicKey for consistent lock ordering across concurrent
     // writers — deadlock-prevention strategy.
@@ -157,33 +157,52 @@ export async function flushSiteBandwidthToDb(): Promise<void> {
                             orgId: string;
                             pubKey: string;
                         }>(sql`
-                            UPDATE sites
-                            SET
-                                "bytesOut"            = COALESCE("bytesOut", 0) + ${bytesIn},
-                                "bytesIn"             = COALESCE("bytesIn", 0)  + ${bytesOut},
-                                "lastBandwidthUpdate" = ${currentTime}
-                            WHERE "pubKey" = ${publicKey}
-                            RETURNING "orgId", "pubKey"
+                            WITH upsert AS (
+                                INSERT INTO "siteBandwidth" ("siteId", "bytesIn", "bytesOut", "lastBandwidthUpdate")
+                                SELECT s."siteId", ${bytesIn}, ${bytesOut}, ${currentEpoch}
+                                FROM "sites" s WHERE s."pubKey" = ${publicKey}
+                                ON CONFLICT ("siteId") DO UPDATE SET
+                                    "bytesIn" = COALESCE("siteBandwidth"."bytesIn", 0) + EXCLUDED."bytesIn",
+                                    "bytesOut" = COALESCE("siteBandwidth"."bytesOut", 0) + EXCLUDED."bytesOut",
+                                    "lastBandwidthUpdate" = EXCLUDED."lastBandwidthUpdate"
+                                RETURNING "siteId"
+                            )
+                            SELECT u."siteId", s."orgId", s."pubKey"
+                            FROM upsert u
+                            INNER JOIN "sites" s ON s."siteId" = u."siteId"
                         `);
                         results.push(...result);
                     }
                     return results;
                 }
 
-                // PostgreSQL: batch UPDATE … FROM (VALUES …) — single round-trip per chunk.
+                // PostgreSQL: batch UPSERT via CTE — single round-trip per chunk.
                 const valuesList = chunk.map(([publicKey, { bytesIn, bytesOut }]) =>
                     sql`(${publicKey}::text, ${bytesIn}::real, ${bytesOut}::real)`
                 );
                 const valuesClause = sql.join(valuesList, sql`, `);
                 return dbQueryRows<{ orgId: string; pubKey: string }>(sql`
-                    UPDATE sites
-                    SET
-                        "bytesOut"            = COALESCE("bytesOut", 0) + v.bytes_in,
-                        "bytesIn"             = COALESCE("bytesIn", 0)  + v.bytes_out,
-                        "lastBandwidthUpdate" = ${currentTime}
-                    FROM (VALUES ${valuesClause}) AS v(pub_key, bytes_in, bytes_out)
-                    WHERE sites."pubKey" = v.pub_key
-                    RETURNING sites."orgId" AS "orgId", sites."pubKey" AS "pubKey"
+                    WITH vals(pub_key, bytes_in, bytes_out) AS (
+                        VALUES ${valuesClause}
+                    ),
+                    site_lookup AS (
+                        SELECT s."siteId", s."orgId", s."pubKey", v.bytes_in, v.bytes_out
+                        FROM vals v
+                        INNER JOIN "sites" s ON s."pubKey" = v.pub_key
+                    ),
+                    upsert AS (
+                        INSERT INTO "siteBandwidth" ("siteId", "bytesIn", "bytesOut", "lastBandwidthUpdate")
+                        SELECT sl."siteId", sl.bytes_in, sl.bytes_out, ${currentEpoch}::integer
+                        FROM site_lookup sl
+                        ON CONFLICT ("siteId") DO UPDATE SET
+                            "bytesIn" = COALESCE("siteBandwidth"."bytesIn", 0) + EXCLUDED."bytesIn",
+                            "bytesOut" = COALESCE("siteBandwidth"."bytesOut", 0) + EXCLUDED."bytesOut",
+                            "lastBandwidthUpdate" = EXCLUDED."lastBandwidthUpdate"
+                        RETURNING "siteId"
+                    )
+                    SELECT u."siteId", s."orgId", s."pubKey"
+                    FROM upsert u
+                    INNER JOIN "sites" s ON s."siteId" = u."siteId"
                 `);
             }, `flush bandwidth chunk [${i}–${chunkEnd}]`);
         } catch (error) {

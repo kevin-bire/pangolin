@@ -1,8 +1,8 @@
 import { disconnectClient, getClientConfigVersion } from "#dynamic/routers/ws";
 import { db } from "@server/db";
 import { MessageHandler } from "@server/routers/ws";
-import { clients, olms, Olm } from "@server/db";
-import { eq, lt, isNull, and, or } from "drizzle-orm";
+import { clients, olms, Olm, clientPing } from "@server/db";
+import { eq, lt, isNull, and, or, inArray } from "drizzle-orm";
 import { recordClientPing } from "@server/routers/newt/pingAccumulator";
 import logger from "@server/logger";
 import { validateSessionToken } from "@server/auth/sessions/app";
@@ -37,21 +37,33 @@ export const startOlmOfflineChecker = (): void => {
             // TODO: WE NEED TO MAKE SURE THIS WORKS WITH DISTRIBUTED NODES ALL DOING THE SAME THING
 
             // Find clients that haven't pinged in the last 2 minutes and mark them as offline
-            const offlineClients = await db
-                .update(clients)
-                .set({ online: false })
+            const staleClientRows = await db
+                .select({
+                    clientId: clients.clientId,
+                    olmId: clients.olmId,
+                    lastPing: clientPing.lastPing
+                })
+                .from(clients)
+                .leftJoin(clientPing, eq(clientPing.clientId, clients.clientId))
                 .where(
                     and(
                         eq(clients.online, true),
                         or(
-                            lt(clients.lastPing, twoMinutesAgo),
-                            isNull(clients.lastPing)
+                            lt(clientPing.lastPing, twoMinutesAgo),
+                            isNull(clientPing.lastPing)
                         )
                     )
-                )
-                .returning();
+                );
 
-            for (const offlineClient of offlineClients) {
+            if (staleClientRows.length > 0) {
+                const staleClientIds = staleClientRows.map((c) => c.clientId);
+                await db
+                    .update(clients)
+                    .set({ online: false })
+                    .where(inArray(clients.clientId, staleClientIds));
+            }
+
+            for (const offlineClient of staleClientRows) {
                 logger.info(
                     `Kicking offline olm client ${offlineClient.clientId} due to inactivity`
                 );

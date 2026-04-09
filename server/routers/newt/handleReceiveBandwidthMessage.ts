@@ -1,6 +1,5 @@
-import { db } from "@server/db";
+import { db, clients, clientBandwidth } from "@server/db";
 import { MessageHandler } from "@server/routers/ws";
-import { clients } from "@server/db";
 import { eq, sql } from "drizzle-orm";
 import logger from "@server/logger";
 
@@ -85,7 +84,7 @@ export async function flushBandwidthToDb(): Promise<void> {
     const snapshot = accumulator;
     accumulator = new Map<string, BandwidthAccumulator>();
 
-    const currentTime = new Date().toISOString();
+    const currentEpoch = Math.floor(Date.now() / 1000);
 
     // Sort by publicKey for consistent lock ordering across concurrent
     // writers — this is the same deadlock-prevention strategy used in the
@@ -101,19 +100,37 @@ export async function flushBandwidthToDb(): Promise<void> {
     for (const [publicKey, { bytesIn, bytesOut }] of sortedEntries) {
         try {
             await withDeadlockRetry(async () => {
-                // Use atomic SQL increment to avoid the SELECT-then-UPDATE
-                // anti-pattern and the races it would introduce.
+                // Find clientId by pubKey
+                const [clientRow] = await db
+                    .select({ clientId: clients.clientId })
+                    .from(clients)
+                    .where(eq(clients.pubKey, publicKey))
+                    .limit(1);
+
+                if (!clientRow) {
+                    logger.warn(`No client found for pubKey ${publicKey}, skipping`);
+                    return;
+                }
+
                 await db
-                    .update(clients)
-                    .set({
+                    .insert(clientBandwidth)
+                    .values({
+                        clientId: clientRow.clientId,
                         // Note: bytesIn from peer goes to megabytesOut (data
                         // sent to client) and bytesOut from peer goes to
                         // megabytesIn (data received from client).
-                        megabytesOut: sql`COALESCE(${clients.megabytesOut}, 0) + ${bytesIn}`,
-                        megabytesIn: sql`COALESCE(${clients.megabytesIn}, 0) + ${bytesOut}`,
-                        lastBandwidthUpdate: currentTime
+                        megabytesOut: bytesIn,
+                        megabytesIn: bytesOut,
+                        lastBandwidthUpdate: currentEpoch
                     })
-                    .where(eq(clients.pubKey, publicKey));
+                    .onConflictDoUpdate({
+                        target: clientBandwidth.clientId,
+                        set: {
+                            megabytesOut: sql`COALESCE(${clientBandwidth.megabytesOut}, 0) + ${bytesIn}`,
+                            megabytesIn: sql`COALESCE(${clientBandwidth.megabytesIn}, 0) + ${bytesOut}`,
+                            lastBandwidthUpdate: currentEpoch
+                        }
+                    });
             }, `flush bandwidth for client ${publicKey}`);
         } catch (error) {
             logger.error(

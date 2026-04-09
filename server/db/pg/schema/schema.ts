@@ -89,12 +89,8 @@ export const sites = pgTable("sites", {
     name: varchar("name").notNull(),
     pubKey: varchar("pubKey"),
     subnet: varchar("subnet"),
-    megabytesIn: real("bytesIn").default(0),
-    megabytesOut: real("bytesOut").default(0),
-    lastBandwidthUpdate: varchar("lastBandwidthUpdate"),
     type: varchar("type").notNull(), // "newt" or "wireguard"
     online: boolean("online").notNull().default(false),
-    lastPing: integer("lastPing"),
     address: varchar("address"),
     endpoint: varchar("endpoint"),
     publicKey: varchar("publicKey"),
@@ -729,10 +725,7 @@ export const clients = pgTable("clients", {
     name: varchar("name").notNull(),
     pubKey: varchar("pubKey"),
     subnet: varchar("subnet").notNull(),
-    megabytesIn: real("bytesIn"),
-    megabytesOut: real("bytesOut"),
-    lastBandwidthUpdate: varchar("lastBandwidthUpdate"),
-    lastPing: integer("lastPing"),
+
     type: varchar("type").notNull(), // "olm"
     online: boolean("online").notNull().default(false),
     // endpoint: varchar("endpoint"),
@@ -743,6 +736,42 @@ export const clients = pgTable("clients", {
     approvalState: varchar("approvalState").$type<
         "pending" | "approved" | "denied"
     >()
+});
+
+export const sitePing = pgTable("sitePing", {
+    siteId: integer("siteId")
+        .primaryKey()
+        .references(() => sites.siteId, { onDelete: "cascade" })
+        .notNull(),
+    lastPing: integer("lastPing")
+});
+
+export const siteBandwidth = pgTable("siteBandwidth", {
+    siteId: integer("siteId")
+        .primaryKey()
+        .references(() => sites.siteId, { onDelete: "cascade" })
+        .notNull(),
+    megabytesIn: real("bytesIn").default(0),
+    megabytesOut: real("bytesOut").default(0),
+    lastBandwidthUpdate: integer("lastBandwidthUpdate") // unix epoch
+});
+
+export const clientPing = pgTable("clientPing", {
+    clientId: integer("clientId")
+        .primaryKey()
+        .references(() => clients.clientId, { onDelete: "cascade" })
+        .notNull(),
+    lastPing: integer("lastPing")
+});
+
+export const clientBandwidth = pgTable("clientBandwidth", {
+    clientId: integer("clientId")
+        .primaryKey()
+        .references(() => clients.clientId, { onDelete: "cascade" })
+        .notNull(),
+    megabytesIn: real("bytesIn"),
+    megabytesOut: real("bytesOut"),
+    lastBandwidthUpdate: integer("lastBandwidthUpdate") // unix epoch
 });
 
 export const clientSitesAssociationsCache = pgTable(
@@ -1106,3 +1135,7 @@ export type RequestAuditLog = InferSelectModel<typeof requestAuditLog>;
 export type RoundTripMessageTracker = InferSelectModel<
     typeof roundTripMessageTracker
 >;
+export type SitePing = typeof sitePing.$inferSelect;
+export type SiteBandwidth = typeof siteBandwidth.$inferSelect;
+export type ClientPing = typeof clientPing.$inferSelect;
+export type ClientBandwidth = typeof clientBandwidth.$inferSelect;

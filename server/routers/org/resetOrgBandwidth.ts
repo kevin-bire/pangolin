@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
-import { db, sites } from "@server/db";
-import { eq } from "drizzle-orm";
+import { db, sites, siteBandwidth } from "@server/db";
+import { eq, inArray } from "drizzle-orm";
 import response from "@server/lib/response";
 import HttpCode from "@server/types/HttpCode";
 import createHttpError from "http-errors";
@@ -60,12 +60,17 @@ export async function resetOrgBandwidth(
         }
 
         await db
-            .update(sites)
+            .update(siteBandwidth)
             .set({
                 megabytesIn: 0,
                 megabytesOut: 0
             })
-            .where(eq(sites.orgId, orgId));
+            .where(
+                inArray(
+                    siteBandwidth.siteId,
+                    db.select({ siteId: sites.siteId }).from(sites).where(eq(sites.orgId, orgId))
+                )
+            );
 
         return response(res, {
             data: {},

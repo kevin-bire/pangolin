@@ -95,12 +95,8 @@ export const sites = sqliteTable("sites", {
     name: text("name").notNull(),
     pubKey: text("pubKey"),
     subnet: text("subnet"),
-    megabytesIn: integer("bytesIn").default(0),
-    megabytesOut: integer("bytesOut").default(0),
-    lastBandwidthUpdate: text("lastBandwidthUpdate"),
     type: text("type").notNull(), // "newt" or "wireguard"
     online: integer("online", { mode: "boolean" }).notNull().default(false),
-    lastPing: integer("lastPing"),
 
     // exit node stuff that is how to connect to the site when it has a wg server
     address: text("address"), // this is the address of the wireguard interface in newt
@@ -399,10 +395,7 @@ export const clients = sqliteTable("clients", {
     pubKey: text("pubKey"),
     olmId: text("olmId"), // to lock it to a specific olm optionally
     subnet: text("subnet").notNull(),
-    megabytesIn: integer("bytesIn"),
-    megabytesOut: integer("bytesOut"),
-    lastBandwidthUpdate: text("lastBandwidthUpdate"),
-    lastPing: integer("lastPing"),
+
     type: text("type").notNull(), // "olm"
     online: integer("online", { mode: "boolean" }).notNull().default(false),
     // endpoint: text("endpoint"),
@@ -412,6 +405,42 @@ export const clients = sqliteTable("clients", {
     approvalState: text("approvalState").$type<
         "pending" | "approved" | "denied"
     >()
+});
+
+export const sitePing = sqliteTable("sitePing", {
+    siteId: integer("siteId")
+        .primaryKey()
+        .references(() => sites.siteId, { onDelete: "cascade" })
+        .notNull(),
+    lastPing: integer("lastPing")
+});
+
+export const siteBandwidth = sqliteTable("siteBandwidth", {
+    siteId: integer("siteId")
+        .primaryKey()
+        .references(() => sites.siteId, { onDelete: "cascade" })
+        .notNull(),
+    megabytesIn: integer("bytesIn").default(0),
+    megabytesOut: integer("bytesOut").default(0),
+    lastBandwidthUpdate: integer("lastBandwidthUpdate") // unix epoch
+});
+
+export const clientPing = sqliteTable("clientPing", {
+    clientId: integer("clientId")
+        .primaryKey()
+        .references(() => clients.clientId, { onDelete: "cascade" })
+        .notNull(),
+    lastPing: integer("lastPing")
+});
+
+export const clientBandwidth = sqliteTable("clientBandwidth", {
+    clientId: integer("clientId")
+        .primaryKey()
+        .references(() => clients.clientId, { onDelete: "cascade" })
+        .notNull(),
+    megabytesIn: integer("bytesIn"),
+    megabytesOut: integer("bytesOut"),
+    lastBandwidthUpdate: integer("lastBandwidthUpdate") // unix epoch
 });
 
 export const clientSitesAssociationsCache = sqliteTable(
@@ -1209,3 +1238,7 @@ export type DeviceWebAuthCode = InferSelectModel<typeof deviceWebAuthCodes>;
 export type RoundTripMessageTracker = InferSelectModel<
     typeof roundTripMessageTracker
 >;
+export type SitePing = typeof sitePing.$inferSelect;
+export type SiteBandwidth = typeof siteBandwidth.$inferSelect;
+export type ClientPing = typeof clientPing.$inferSelect;
+export type ClientBandwidth = typeof clientBandwidth.$inferSelect;

@@ -18,10 +18,11 @@ import {
     subscriptionItems,
     usage,
     sites,
+    siteBandwidth,
     customers,
     orgs
 } from "@server/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import logger from "@server/logger";
 import { getFeatureIdByMetricId, getFeatureIdByPriceId } from "@server/lib/billing/features";
 import stripe from "#private/lib/stripe";
@@ -253,14 +254,19 @@ export async function handleSubscriptionUpdated(
                                     );
                                 }
 
-                                // Also reset the sites to 0
+                                // Also reset the site bandwidth to 0
                                 await trx
-                                    .update(sites)
+                                    .update(siteBandwidth)
                                     .set({
                                         megabytesIn: 0,
                                         megabytesOut: 0
                                     })
-                                    .where(eq(sites.orgId, orgId));
+                                    .where(
+                                        inArray(
+                                            siteBandwidth.siteId,
+                                            trx.select({ siteId: sites.siteId }).from(sites).where(eq(sites.orgId, orgId))
+                                        )
+                                    );
                             });
                         }
                     }

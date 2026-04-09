@@ -3,7 +3,7 @@ import config from "./config";
 import { getHostMeta } from "./hostMeta";
 import logger from "@server/logger";
 import { apiKeys, db, roles, siteResources } from "@server/db";
-import { sites, users, orgs, resources, clients, idp } from "@server/db";
+import { sites, users, orgs, resources, clients, idp, siteBandwidth } from "@server/db";
 import { eq, count, notInArray, and, isNotNull, isNull } from "drizzle-orm";
 import { APP_VERSION } from "./consts";
 import crypto from "crypto";
@@ -150,12 +150,13 @@ class TelemetryClient {
             const siteDetails = await db
                 .select({
                     siteName: sites.name,
-                    megabytesIn: sites.megabytesIn,
-                    megabytesOut: sites.megabytesOut,
+                    megabytesIn: siteBandwidth.megabytesIn,
+                    megabytesOut: siteBandwidth.megabytesOut,
                     type: sites.type,
                     online: sites.online
                 })
-                .from(sites);
+                .from(sites)
+                .leftJoin(siteBandwidth, eq(siteBandwidth.siteId, sites.siteId));
 
             const supporterKey = config.getSupporterData();
 

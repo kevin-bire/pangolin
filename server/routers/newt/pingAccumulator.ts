@@ -1,6 +1,6 @@
 import { db } from "@server/db";
-import { sites, clients, olms } from "@server/db";
-import { inArray } from "drizzle-orm";
+import { sites, clients, olms, sitePing, clientPing } from "@server/db";
+import { inArray, sql } from "drizzle-orm";
 import logger from "@server/logger";
 
 /**
@@ -81,11 +81,8 @@ export function recordClientPing(
 /**
  * Flush all accumulated site pings to the database.
  *
- * Each batch of up to BATCH_SIZE rows is written with a **single** UPDATE
- * statement. We use the maximum timestamp across the batch so that `lastPing`
- * reflects the most recent ping seen for any site in the group. This avoids
- * the multi-statement transaction that previously created additional
- * row-lock ordering hazards.
+ * For each batch: first upserts individual per-site timestamps into
+ * `sitePing`, then bulk-updates `sites.online = true`.
  */
 async function flushSitePingsToDb(): Promise<void> {
     if (pendingSitePings.size === 0) {
@@ -103,20 +100,25 @@ async function flushSitePingsToDb(): Promise<void> {
     for (let i = 0; i < entries.length; i += BATCH_SIZE) {
         const batch = entries.slice(i, i + BATCH_SIZE);
 
-        // Use the latest timestamp in the batch so that `lastPing` always
-        // moves forward. Using a single timestamp for the whole batch means
-        // we only ever need one UPDATE statement (no transaction).
-        const maxTimestamp = Math.max(...batch.map(([, ts]) => ts));
         const siteIds = batch.map(([id]) => id);
 
         try {
             await withRetry(async () => {
+                const rows = batch.map(([siteId, ts]) => ({ siteId, lastPing: ts }));
+
+                // Step 1: Upsert ping timestamps into sitePing
+                await db
+                    .insert(sitePing)
+                    .values(rows)
+                    .onConflictDoUpdate({
+                        target: sitePing.siteId,
+                        set: { lastPing: sql`excluded."lastPing"` }
+                    });
+
+                // Step 2: Update online status on sites
                 await db
                     .update(sites)
-                    .set({
-                        online: true,
-                        lastPing: maxTimestamp
-                    })
+                    .set({ online: true })
                     .where(inArray(sites.siteId, siteIds));
             }, "flushSitePingsToDb");
         } catch (error) {
@@ -139,7 +141,8 @@ async function flushSitePingsToDb(): Promise<void> {
 /**
  * Flush all accumulated client (OLM) pings to the database.
  *
- * Same single-UPDATE-per-batch approach as `flushSitePingsToDb`.
+ * For each batch: first upserts individual per-client timestamps into
+ * `clientPing`, then bulk-updates `clients.online = true, archived = false`.
  */
 async function flushClientPingsToDb(): Promise<void> {
     if (pendingClientPings.size === 0 && pendingOlmArchiveResets.size === 0) {
@@ -161,18 +164,25 @@ async function flushClientPingsToDb(): Promise<void> {
         for (let i = 0; i < entries.length; i += BATCH_SIZE) {
             const batch = entries.slice(i, i + BATCH_SIZE);
 
-            const maxTimestamp = Math.max(...batch.map(([, ts]) => ts));
             const clientIds = batch.map(([id]) => id);
 
             try {
                 await withRetry(async () => {
+                    const rows = batch.map(([clientId, ts]) => ({ clientId, lastPing: ts }));
+
+                    // Step 1: Upsert ping timestamps into clientPing
+                    await db
+                        .insert(clientPing)
+                        .values(rows)
+                        .onConflictDoUpdate({
+                            target: clientPing.clientId,
+                            set: { lastPing: sql`excluded."lastPing"` }
+                        });
+
+                    // Step 2: Update online + unarchive on clients
                     await db
                         .update(clients)
-                        .set({
-                            lastPing: maxTimestamp,
-                            online: true,
-                            archived: false
-                        })
+                        .set({ online: true, archived: false })
                         .where(inArray(clients.clientId, clientIds));
                 }, "flushClientPingsToDb");
             } catch (error) {

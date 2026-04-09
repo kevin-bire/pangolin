@@ -1,11 +1,11 @@
-import { db, newts, sites, targetHealthCheck, targets } from "@server/db";
+import { db, newts, sites, targetHealthCheck, targets, sitePing, siteBandwidth } from "@server/db";
 import {
     hasActiveConnections,
     getClientConfigVersion
 } from "#dynamic/routers/ws";
 import { MessageHandler } from "@server/routers/ws";
 import { Newt } from "@server/db";
-import { eq, lt, isNull, and, or, ne, not } from "drizzle-orm";
+import { eq, lt, isNull, and, or, ne } from "drizzle-orm";
 import logger from "@server/logger";
 import { sendNewtSyncMessage } from "./sync";
 import { recordPing } from "./pingAccumulator";
@@ -41,17 +41,18 @@ export const startNewtOfflineChecker = (): void => {
                 .select({
                     siteId: sites.siteId,
                     newtId: newts.newtId,
-                    lastPing: sites.lastPing
+                    lastPing: sitePing.lastPing
                 })
                 .from(sites)
                 .innerJoin(newts, eq(newts.siteId, sites.siteId))
+                .leftJoin(sitePing, eq(sitePing.siteId, sites.siteId))
                 .where(
                     and(
                         eq(sites.online, true),
                         eq(sites.type, "newt"),
                         or(
-                            lt(sites.lastPing, twoMinutesAgo),
-                            isNull(sites.lastPing)
+                            lt(sitePing.lastPing, twoMinutesAgo),
+                            isNull(sitePing.lastPing)
                         )
                     )
                 );
@@ -112,15 +113,11 @@ export const startNewtOfflineChecker = (): void => {
                 .select({
                     siteId: sites.siteId,
                     online: sites.online,
-                    lastBandwidthUpdate: sites.lastBandwidthUpdate
+                    lastBandwidthUpdate: siteBandwidth.lastBandwidthUpdate
                 })
                 .from(sites)
-                .where(
-                    and(
-                        eq(sites.type, "wireguard"),
-                        not(isNull(sites.lastBandwidthUpdate))
-                    )
-                );
+                .innerJoin(siteBandwidth, eq(siteBandwidth.siteId, sites.siteId))
+                .where(eq(sites.type, "wireguard"));
 
             const wireguardOfflineThreshold = Math.floor(
                 (Date.now() - OFFLINE_THRESHOLD_BANDWIDTH_MS) / 1000
@@ -128,12 +125,7 @@ export const startNewtOfflineChecker = (): void => {
 
             // loop over each one. If its offline and there is a new update then mark it online. If its online and there is no update then mark it offline
             for (const site of allWireguardSites) {
-                const lastBandwidthUpdate =
-                    new Date(site.lastBandwidthUpdate!).getTime() / 1000;
-                if (
-                    lastBandwidthUpdate < wireguardOfflineThreshold &&
-                    site.online
-                ) {
+                if ((site.lastBandwidthUpdate ?? 0) < wireguardOfflineThreshold && site.online) {
                     logger.info(
                         `Marking wireguard site ${site.siteId} offline: no bandwidth update in over ${OFFLINE_THRESHOLD_BANDWIDTH_MS / 60000} minutes`
                     );
@@ -142,10 +134,7 @@ export const startNewtOfflineChecker = (): void => {
                         .update(sites)
                         .set({ online: false })
                         .where(eq(sites.siteId, site.siteId));
-                } else if (
-                    lastBandwidthUpdate >= wireguardOfflineThreshold &&
-                    !site.online
-                ) {
+                } else if ((site.lastBandwidthUpdate ?? 0) >= wireguardOfflineThreshold && !site.online) {
                     logger.info(
                         `Marking wireguard site ${site.siteId} online: recent bandwidth update`
                     );

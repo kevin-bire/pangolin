@@ -6,6 +6,7 @@ import {
     remoteExitNodes,
     roleSites,
     sites,
+    siteBandwidth,
     userSites
 } from "@server/db";
 import cache from "#dynamic/lib/cache";
@@ -155,8 +156,8 @@ function querySitesBase() {
             name: sites.name,
             pubKey: sites.pubKey,
             subnet: sites.subnet,
-            megabytesIn: sites.megabytesIn,
-            megabytesOut: sites.megabytesOut,
+            megabytesIn: siteBandwidth.megabytesIn,
+            megabytesOut: siteBandwidth.megabytesOut,
             orgName: orgs.name,
             type: sites.type,
             online: sites.online,
@@ -175,7 +176,8 @@ function querySitesBase() {
         .leftJoin(
             remoteExitNodes,
             eq(remoteExitNodes.exitNodeId, sites.exitNodeId)
-        );
+        )
+        .leftJoin(siteBandwidth, eq(siteBandwidth.siteId, sites.siteId));
 }
 
 type SiteWithUpdateAvailable = Awaited<ReturnType<typeof querySitesBase>>[0] & {
@@ -299,9 +301,15 @@ export async function listSites(
             .offset(pageSize * (page - 1))
             .orderBy(
                 sort_by
-                    ? order === "asc"
-                        ? asc(sites[sort_by])
-                        : desc(sites[sort_by])
+                    ? (() => {
+                          const field =
+                              sort_by === "megabytesIn"
+                                  ? siteBandwidth.megabytesIn
+                                  : sort_by === "megabytesOut"
+                                    ? siteBandwidth.megabytesOut
+                                    : sites.name;
+                          return order === "asc" ? asc(field) : desc(field);
+                      })()
                     : asc(sites.name)
             );
 

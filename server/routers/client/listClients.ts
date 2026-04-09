@@ -1,4 +1,5 @@
 import {
+    clientBandwidth,
     clients,
     clientSitesAssociationsCache,
     currentFingerprint,
@@ -180,8 +181,8 @@ function queryClientsBase() {
             name: clients.name,
             pubKey: clients.pubKey,
             subnet: clients.subnet,
-            megabytesIn: clients.megabytesIn,
-            megabytesOut: clients.megabytesOut,
+            megabytesIn: clientBandwidth.megabytesIn,
+            megabytesOut: clientBandwidth.megabytesOut,
             orgName: orgs.name,
             type: clients.type,
             online: clients.online,
@@ -200,7 +201,8 @@ function queryClientsBase() {
         .leftJoin(orgs, eq(clients.orgId, orgs.orgId))
         .leftJoin(olms, eq(clients.clientId, olms.clientId))
         .leftJoin(users, eq(clients.userId, users.userId))
-        .leftJoin(currentFingerprint, eq(olms.olmId, currentFingerprint.olmId));
+        .leftJoin(currentFingerprint, eq(olms.olmId, currentFingerprint.olmId))
+        .leftJoin(clientBandwidth, eq(clientBandwidth.clientId, clients.clientId));
 }
 
 async function getSiteAssociations(clientIds: number[]) {
@@ -367,9 +369,15 @@ export async function listClients(
             .offset(pageSize * (page - 1))
             .orderBy(
                 sort_by
-                    ? order === "asc"
-                        ? asc(clients[sort_by])
-                        : desc(clients[sort_by])
+                    ? (() => {
+                          const field =
+                              sort_by === "megabytesIn"
+                                  ? clientBandwidth.megabytesIn
+                                  : sort_by === "megabytesOut"
+                                    ? clientBandwidth.megabytesOut
+                                    : clients.name;
+                          return order === "asc" ? asc(field) : desc(field);
+                      })()
                     : asc(clients.name)
             );
 
