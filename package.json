@@ -63,5 +63,6 @@
   },
   "engines": {
     "node": ">=22.0.0"
-  }
+  },
+  "_note": "Personal fork of fosrl/pangolin for learning and local homelab use"
 }
