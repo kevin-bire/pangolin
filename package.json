@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "ts-node src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "dev:debug": "ts-node-dev --respawn --transpile-only --inspect src/index.ts"
   },
   "keywords": [
     "reverse-proxy",
@@ -64,5 +65,6 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "_note": "Personal fork of fosrl/pangolin for learning and local homelab use"
+  "_note": "Personal fork of fosrl/pangolin for learning and local homelab use",
+  "_upstream": "https://github.com/fosrl/pangolin"
 }
